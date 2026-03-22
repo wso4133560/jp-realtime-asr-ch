@@ -57,6 +57,12 @@ def parse_args():
         help="ReazonSpeech model language.",
     )
     parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=int(os.getenv("REAZON_CPU_THREADS", "0")),
+        help="CPU inference threads. 0 means auto.",
+    )
+    parser.add_argument(
         "--window-sec",
         type=float,
         default=8.0,
@@ -102,6 +108,11 @@ def parse_args():
         "--print-source",
         action="store_true",
         help="Print source-language ASR lines in addition to Chinese translation lines.",
+    )
+    parser.add_argument(
+        "--disable-translation",
+        action="store_true",
+        help="Run ASR only and skip all Ollama translation requests.",
     )
     parser.add_argument(
         "--output-txt",
@@ -182,7 +193,8 @@ def preload_cuda_runtime_libs(enabled):
         ctypes.CDLL(str(path), mode=ctypes.RTLD_GLOBAL)
 
 
-from reazonspeech.k2.asr import audio_from_numpy, load_model, transcribe  # noqa: E402
+from reazonspeech.k2.asr import audio_from_numpy, transcribe  # noqa: E402
+from reazon_asr_runtime import load_model, resolve_cpu_threads  # noqa: E402
 
 
 def normalize_device(device):
@@ -294,6 +306,10 @@ class RecognitionState:
     saw_output: bool = False
     warned_no_output: bool = False
     last_rms: float = 0.0
+    asr_calls: int = 0
+    asr_total_tokens: int = 0
+    asr_total_infer_sec: float = 0.0
+    asr_total_audio_sec: float = 0.0
 
 
 class SystemAudioChineseTranslator:
@@ -320,6 +336,7 @@ class SystemAudioChineseTranslator:
             device=normalize_device(self.args.device),
             precision=self.args.precision,
             language=self.args.language,
+            cpu_threads=self.args.cpu_threads,
         )
 
     def _capture_command(self):
@@ -336,7 +353,7 @@ class SystemAudioChineseTranslator:
     def _transcribe(self, samples):
         audio = audio_from_numpy(samples, DEFAULT_RATE)
         result = transcribe(self.model, audio)
-        return normalize_text(result.text)
+        return normalize_text(result.text), len(result.subwords)
 
     def _debug_audio(self, rms, audio_sec, raw_text=""):
         if not self.args.debug_audio:
@@ -415,6 +432,28 @@ class SystemAudioChineseTranslator:
             translated = self._ollama_generate(self._build_translation_prompt(text, strict=True))
         return translated
 
+    def _record_asr_metrics(self, state, token_count, audio_sec, infer_sec):
+        state.asr_calls += 1
+        state.asr_total_tokens += token_count
+        state.asr_total_infer_sec += infer_sec
+        state.asr_total_audio_sec += audio_sec
+
+    def _print_asr_summary(self, state):
+        avg_tokens_per_second = (
+            state.asr_total_tokens / state.asr_total_infer_sec if state.asr_total_infer_sec else 0.0
+        )
+        avg_realtime_speedup = (
+            state.asr_total_audio_sec / state.asr_total_infer_sec
+            if state.asr_total_infer_sec
+            else 0.0
+        )
+        print(f"asr_calls={state.asr_calls}", flush=True)
+        print(f"asr_total_tokens={state.asr_total_tokens}", flush=True)
+        print(f"asr_total_infer_seconds={state.asr_total_infer_sec:.3f}", flush=True)
+        print(f"asr_total_audio_seconds={state.asr_total_audio_sec:.3f}", flush=True)
+        print(f"asr_avg_tokens_per_second={avg_tokens_per_second:.3f}", flush=True)
+        print(f"asr_avg_realtime_speedup={avg_realtime_speedup:.3f}", flush=True)
+
     def _is_forward_progress(self, state, text):
         if not text or text == state.last_emit_text:
             return False
@@ -431,7 +470,7 @@ class SystemAudioChineseTranslator:
                 return overlap >= 4 and len(text) > overlap
         return False
 
-    def _emit_output(self, state, text, audio_sec, infer_sec):
+    def _emit_output(self, state, text, token_count, audio_sec, infer_sec):
         if self.args.print_mode == "full":
             source_message = text
         else:
@@ -440,8 +479,9 @@ class SystemAudioChineseTranslator:
                 source_message = text
 
         if self.args.print_source and source_message:
+            token_rate = token_count / infer_sec if infer_sec else 0.0
             print(
-                f"[{now_label()}] source audio={audio_sec:0.1f}s infer={infer_sec:0.3f}s text={source_message}",
+                f"[{now_label()}] source audio={audio_sec:0.1f}s infer={infer_sec:0.3f}s tokens={token_count} tokps={token_rate:0.3f} text={source_message}",
                 flush=True,
             )
             state.saw_output = True
@@ -451,6 +491,10 @@ class SystemAudioChineseTranslator:
             self._append_source_txt(text)
             state.last_emit_text = text
             state.best_text = text
+
+        if self.args.disable_translation:
+            state.last_text = text
+            return
 
         cleaned_text, should_translate = is_translation_candidate(
             text, self.args.translate_min_chars
@@ -514,10 +558,16 @@ class SystemAudioChineseTranslator:
         print(f"capture_source={self.capture_source}", flush=True)
         print(f"device={self.args.device}", flush=True)
         print(
+            f"cpu_threads={resolve_cpu_threads(self.args.device, self.args.cpu_threads)}",
+            flush=True,
+        )
+        print(
             f"window_sec={self.args.window_sec} step_sec={self.args.step_sec} print_mode={self.args.print_mode}",
             flush=True,
         )
-        print(f"translate_model={self.args.translate_model}", flush=True)
+        print(f"translation_enabled={str(not self.args.disable_translation).lower()}", flush=True)
+        if not self.args.disable_translation:
+            print(f"translate_model={self.args.translate_model}", flush=True)
         if self.args.output_txt:
             print(f"output_txt={self.args.output_txt}", flush=True)
         if self.args.output_source_txt:
@@ -585,11 +635,12 @@ class SystemAudioChineseTranslator:
 
                 state.silent_for_sec = 0.0
                 infer_started = time.perf_counter()
-                text = self._transcribe(samples)
+                text, token_count = self._transcribe(samples)
                 infer_sec = time.perf_counter() - infer_started
+                self._record_asr_metrics(state, token_count, audio_sec, infer_sec)
                 self._debug_audio(rms, audio_sec, raw_text=text)
                 if text:
-                    self._emit_output(state, text, audio_sec, infer_sec)
+                    self._emit_output(state, text, token_count, audio_sec, infer_sec)
         finally:
             self.running = False
             if process.poll() is None:
@@ -602,6 +653,7 @@ class SystemAudioChineseTranslator:
                 process.stderr.close()
             if process.stdout:
                 process.stdout.close()
+            self._print_asr_summary(state)
 
     def _handle_stop(self, signum, _frame):
         del signum

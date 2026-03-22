@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 
 import argparse
+import os
 import statistics
 import time
 
-from reazonspeech.k2.asr import audio_from_path, load_model, transcribe
+from reazonspeech.k2.asr import audio_from_path, transcribe
+from reazon_asr_runtime import load_model, resolve_cpu_threads
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Benchmark reazonspeech-k2-v2 on CUDA and report tokens/s."
+        description="Benchmark reazonspeech-k2-v2 ASR and report tokens/s."
     )
     parser.add_argument("--audio", required=True, help="Path to an input audio file.")
     parser.add_argument("--device", default="cuda", choices=["cpu", "cuda", "coreml"])
@@ -24,6 +26,12 @@ def parse_args():
         default="ja",
         choices=["ja", "ja-en", "ja-en-mls-5k"],
         help="Which ReazonSpeech K2 model to load.",
+    )
+    parser.add_argument(
+        "--cpu-threads",
+        type=int,
+        default=int(os.getenv("REAZON_CPU_THREADS", "0")),
+        help="CPU inference threads. 0 means auto.",
     )
     parser.add_argument(
         "--warmup-runs",
@@ -51,6 +59,7 @@ def main():
         device=args.device,
         precision=args.precision,
         language=args.language,
+        cpu_threads=args.cpu_threads,
     )
     load_elapsed = time.perf_counter() - load_started
 
@@ -74,12 +83,14 @@ def main():
     avg_latency = statistics.mean(latencies)
     avg_tokens = statistics.mean(token_counts)
     avg_tokens_per_second = total_tokens / total_time if total_time else 0.0
+    last_token_count = token_counts[-1]
     realtime_factor = avg_latency / audio_seconds if audio_seconds else 0.0
     realtime_speedup = audio_seconds / avg_latency if avg_latency else 0.0
 
     print(f"audio_path={args.audio}")
     print(f"audio_seconds={audio_seconds:.3f}")
     print(f"device_requested={args.device}")
+    print(f"cpu_threads={resolve_cpu_threads(args.device, args.cpu_threads)}")
     print(f"precision={args.precision}")
     print(f"language={args.language}")
     print(f"model_load_seconds={load_elapsed:.3f}")
@@ -89,7 +100,10 @@ def main():
     print(f"min_latency_seconds={min(latencies):.3f}")
     print(f"max_latency_seconds={max(latencies):.3f}")
     print(f"avg_tokens={avg_tokens:.1f}")
+    print(f"total_tokens={total_tokens}")
+    print(f"total_decode_seconds={total_time:.3f}")
     print(f"avg_tokens_per_second={avg_tokens_per_second:.3f}")
+    print(f"last_token_count={last_token_count}")
     print(f"avg_realtime_factor={realtime_factor:.3f}")
     print(f"avg_realtime_speedup={realtime_speedup:.3f}")
     if warmup_result is not None:

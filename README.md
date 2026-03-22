@@ -12,6 +12,37 @@ Built with `ReazonSpeech K2` for Japanese ASR and `Ollama` for local translation
 - Simple shell entrypoints for benchmark and live demo.
 - Tested locally on RTX 3080 with more than `120x` realtime speed on the sample file.
 
+## CPU-Only ASR
+
+You can run the project in ASR-only mode on CPU without starting Ollama.
+
+Offline token/s benchmark:
+
+```bash
+./run_benchmark_asr_cpu.sh --audio demo.mp3 --precision fp32 --language ja --cpu-threads 4 --warmup-runs 1 --runs 3
+```
+
+Realtime ASR only:
+
+```bash
+./run_system_audio_asr_cpu.sh \
+  --source alsa_output.pci-0000_04_00.1.hdmi-stereo.monitor \
+  --cpu-threads 4 \
+  --duration-sec 15
+```
+
+The realtime script prints per-decode `tokens=` and `tokps=` and ends with cumulative `asr_avg_tokens_per_second=` statistics. For CPU, `--cpu-threads 0` means auto, which currently picks up to 4 threads for a single ASR instance.
+
+CPU-only environment setup:
+
+```bash
+python -m venv venv
+venv/bin/pip install -U pip setuptools wheel numpy sherpa-onnx
+venv/bin/pip install git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/k2-asr
+```
+
+Note: the checked-in environment setup below is CUDA-oriented. For a true CPU-only setup, install `sherpa-onnx` from PyPI instead of the CUDA wheel.
+
 ## Demo Snapshot
 
 Offline benchmark command:
@@ -51,8 +82,16 @@ venv/bin/pip install ./upstream/pkg/k2-asr
 
 ### 2. Verify Offline Japanese ASR
 
+CUDA:
+
 ```bash
 ./run_benchmark_cuda.sh --audio demo.mp3 --device cuda --precision fp32 --language ja --warmup-runs 1 --runs 3
+```
+
+CPU:
+
+```bash
+./run_benchmark_asr_cpu.sh --audio demo.mp3 --precision fp32 --language ja --cpu-threads 4 --warmup-runs 1 --runs 3
 ```
 
 ### 3. Start Realtime Translation
@@ -126,10 +165,22 @@ The runtime filters unstable short fragments before sending text to Ollama, whic
 ./run_benchmark_cuda.sh --audio demo.mp3 --device cuda --precision fp32 --language ja --warmup-runs 1 --runs 3
 ```
 
+### Offline Benchmark on CPU
+
+```bash
+./run_benchmark_asr_cpu.sh --audio demo.mp3 --precision fp32 --language ja --cpu-threads 4 --warmup-runs 1 --runs 3
+```
+
 ### Realtime Translation
 
 ```bash
 ./run_system_audio_translate_reazon.sh --print-source
+```
+
+### Realtime ASR on CPU Without Translation
+
+```bash
+./run_system_audio_asr_cpu.sh --cpu-threads 4 --duration-sec 15
 ```
 
 ### Pin a Specific Source
@@ -197,6 +248,10 @@ OLLAMA_HOST=http://127.0.0.1:11434 ./run_system_audio_translate_reazon.sh --prin
 
 - Default ASR device: `cuda`
 - CPU override: `REAZON_DEVICE=cpu`
+- CPU thread override: `REAZON_CPU_THREADS=4` or `--cpu-threads 4`
+- Disable translation at runtime: `--disable-translation`
+- CPU benchmark helper: `run_benchmark_asr_cpu.sh`
+- CPU realtime ASR helper: `run_system_audio_asr_cpu.sh`
 - Specific GPU override: `REAZON_DEVICE=cuda:0`
 - Translation model override: `TRANSLATE_MODEL=...`
 - Ollama host override: `OLLAMA_HOST=http://host:11434`
@@ -206,9 +261,9 @@ OLLAMA_HOST=http://127.0.0.1:11434 ./run_system_audio_translate_reazon.sh --prin
 ## Requirements
 
 - Linux with PulseAudio or PipeWire compatibility for `pactl` and `parec`
-- NVIDIA GPU for the intended CUDA path
+- NVIDIA GPU for the intended CUDA path, or CPU for the ASR-only path
 - Python 3.10
-- Ollama for local translation
+- Ollama only when translation is enabled
 
 ## FAQ / Troubleshooting
 
@@ -278,9 +333,12 @@ This is expected for very short or noisy live segments. Try:
 ## Repository Layout
 
 - `benchmark_reazonspeech_k2_cuda.py`: offline benchmark runner
+- `reazon_asr_runtime.py`: local model loader with configurable CPU threads
 - `run_benchmark_cuda.sh`: benchmark wrapper with CUDA library paths
+- `run_benchmark_asr_cpu.sh`: CPU benchmark wrapper
 - `system_audio_translate_reazon.py`: realtime ASR and translation entrypoint
 - `run_system_audio_translate_reazon.sh`: realtime wrapper script
+- `run_system_audio_asr_cpu.sh`: CPU realtime ASR-only wrapper
 - `demo.mp3`: sample Japanese audio for validation
 
 ## Main Entrypoint
