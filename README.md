@@ -10,7 +10,7 @@ Built with `ReazonSpeech K2` for Japanese ASR and `Ollama` for local translation
 - Realtime capture from PulseAudio monitor sources.
 - Japanese to Simplified Chinese translation through Ollama.
 - Simple shell entrypoints for benchmark and live demo.
-- Tested locally on RTX 3080 with more than `120x` realtime speed on the sample file.
+- Current CPU benchmark on `demo.mp3` with `--cpu-threads 4`: `50.158` tokens/s and `10.932x` realtime speedup.
 
 ## CPU-Only ASR
 
@@ -31,7 +31,7 @@ Realtime ASR only:
   --duration-sec 15
 ```
 
-The realtime script prints per-decode `tokens=` and `tokps=` and ends with cumulative `asr_avg_tokens_per_second=` statistics. For CPU, `--cpu-threads 0` means auto, which currently picks up to 4 threads for a single ASR instance.
+The realtime script prints per-decode `tokens=` and `tokps=` and ends with cumulative `asr_avg_tokens_per_second=` statistics. Current realtime CPU smoke test with `--cpu-threads 4` reached `25.019` tokens/s and `12.810x` realtime speedup. For CPU, `--cpu-threads 0` means auto, which currently picks up to 4 threads for a single ASR instance.
 
 CPU-only environment setup:
 
@@ -45,20 +45,33 @@ Note: the checked-in environment setup below is CUDA-oriented. For a true CPU-on
 
 ## Demo Snapshot
 
-Offline benchmark command:
+Offline CPU benchmark command:
 
 ```bash
-./run_benchmark_cuda.sh --audio demo.mp3 --device cuda --precision fp32 --language ja --warmup-runs 1 --runs 3
+./run_benchmark_asr_cpu.sh --audio demo.mp3 --precision fp32 --language ja --cpu-threads 4 --warmup-runs 1 --runs 3
 ```
 
 Example output:
 
 ```text
 audio_seconds=17.000
-model_load_seconds=4.835
-avg_latency_seconds=0.141
-avg_realtime_speedup=120.713
+device_requested=cpu
+cpu_threads=4
+model_load_seconds=3.716
+avg_latency_seconds=1.555
+avg_tokens_per_second=50.158
+avg_realtime_speedup=10.932
 last_text=長野県は全国で三番目に大きな県ですお隣の山梨県の三倍以上もあります長野から飯田へ行くのにも東京へ行くのと同じ時間がかかるのを見ても面積の広いことが分かります
+```
+
+Realtime CPU smoke output:
+
+```text
+asr_calls=8
+asr_total_tokens=125
+asr_total_infer_seconds=4.996
+asr_avg_tokens_per_second=25.019
+asr_avg_realtime_speedup=12.810
 ```
 
 ## Quick Start
