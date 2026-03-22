@@ -1,41 +1,81 @@
-# ReazonSpeech K2 CUDA Benchmark
+# Japanese Realtime ASR to Chinese Translation
 
-## Environment
+Run Japanese speech recognition locally on NVIDIA GPU and turn live system audio into Simplified Chinese in realtime.
 
-```bash
-python -m venv venv
-venv/bin/pip install -U pip setuptools wheel
-venv/bin/pip install https://huggingface.co/csukuangfj2/sherpa-onnx-wheels/resolve/main/cuda/1.12.31/sherpa_onnx-1.12.31+cuda12.cudnn9-cp310-cp310-linux_x86_64.whl
-venv/bin/pip install ./upstream/pkg/k2-asr
-venv/bin/pip install nvidia-cudnn-cu12 nvidia-cublas-cu12 nvidia-cuda-runtime-cu12
-curl -fsSL -o demo.mp3 https://research.reazon.jp/_static/demo.mp3
-```
+Built with `ReazonSpeech K2` for Japanese ASR and `Ollama` for local translation, this repo is designed for demos, monitoring, bilingual workflows, and fast internal deployment.
 
-## Benchmark
+## Highlights
+
+- Local Japanese ASR on CUDA.
+- Realtime capture from PulseAudio monitor sources.
+- Japanese to Simplified Chinese translation through Ollama.
+- Simple shell entrypoints for benchmark and live demo.
+- Tested locally on RTX 3080 with more than `120x` realtime speed on the sample file.
+
+## Demo Snapshot
+
+Offline benchmark command:
 
 ```bash
 ./run_benchmark_cuda.sh --audio demo.mp3 --device cuda --precision fp32 --language ja --warmup-runs 1 --runs 3
 ```
 
-The wrapper script exports the NVIDIA runtime library paths needed by the `sherpa-onnx` CUDA wheel.
+Example output:
 
-## System Audio Translation
-
-The realtime system-audio translator captures PulseAudio monitor audio, transcribes it with ReazonSpeech K2 on CUDA, and translates the Japanese speech into Simplified Chinese with `translategemma:4b-it-q4_K_M`.
-
-### Run Script
-
-```bash
-./run_system_audio_translate_reazon.sh --print-source
+```text
+audio_seconds=17.000
+model_load_seconds=4.835
+avg_latency_seconds=0.141
+avg_realtime_speedup=120.713
+last_text=長野県は全国で三番目に大きな県ですお隣の山梨県の三倍以上もあります長野から飯田へ行くのにも東京へ行くのと同じ時間がかかるのを見ても面積の広いことが分かります
 ```
 
-### List Sources
+## Quick Start
+
+### 1. Create the Environment
+
+```bash
+python -m venv venv
+venv/bin/pip install -U pip setuptools wheel
+venv/bin/pip install https://huggingface.co/csukuangfj2/sherpa-onnx-wheels/resolve/main/cuda/1.12.31/sherpa_onnx-1.12.31+cuda12.cudnn9-cp310-cp310-linux_x86_64.whl
+venv/bin/pip install nvidia-cudnn-cu12 nvidia-cublas-cu12 nvidia-cuda-runtime-cu12
+venv/bin/pip install git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/k2-asr
+curl -fsSL -o demo.mp3 https://research.reazon.jp/_static/demo.mp3
+```
+
+If you already have the upstream repository checked out locally, you can replace the Git install with:
+
+```bash
+venv/bin/pip install ./upstream/pkg/k2-asr
+```
+
+### 2. Verify Offline Japanese ASR
+
+```bash
+./run_benchmark_cuda.sh --audio demo.mp3 --device cuda --precision fp32 --language ja --warmup-runs 1 --runs 3
+```
+
+### 3. Start Realtime Translation
+
+Start Ollama in a separate terminal:
+
+```bash
+ollama serve
+```
+
+Pull the default translation model:
+
+```bash
+ollama pull translategemma:4b-it-q4_K_M
+```
+
+List available PulseAudio sources:
 
 ```bash
 ./run_system_audio_translate_reazon.sh --list-sources
 ```
 
-### Pin A Source
+Then run the live pipeline:
 
 ```bash
 ./run_system_audio_translate_reazon.sh \
@@ -43,7 +83,64 @@ The realtime system-audio translator captures PulseAudio monitor audio, transcri
   --print-source
 ```
 
-### Debug Mode
+Typical startup output:
+
+```text
+status=loading_asr_model
+status=asr_model_ready
+capture_source=alsa_output.pci-0000_04_00.1.hdmi-stereo.monitor
+device=cuda
+translate_model=translategemma:4b-it-q4_K_M
+ready=true
+```
+
+After `ready=true`, the script emits Japanese ASR lines and Chinese translation lines.
+
+## Best-Fit Use Cases
+
+- Livestream monitoring for Japanese content.
+- Internal meetings for Japanese and Chinese speaking teams.
+- Subtitle drafting for podcasts, videos, and event recordings.
+- Booth demos for local speech AI on consumer GPUs.
+- QA review for bilingual audio workflows.
+
+## How It Works
+
+```text
+System Audio
+  -> PulseAudio monitor source
+  -> parec capture
+  -> ReazonSpeech K2 ASR
+  -> stable Japanese text
+  -> Ollama /api/generate
+  -> Simplified Chinese translation
+```
+
+The runtime filters unstable short fragments before sending text to Ollama, which keeps translation output cleaner in live conditions.
+
+## Main Commands
+
+### Offline Benchmark
+
+```bash
+./run_benchmark_cuda.sh --audio demo.mp3 --device cuda --precision fp32 --language ja --warmup-runs 1 --runs 3
+```
+
+### Realtime Translation
+
+```bash
+./run_system_audio_translate_reazon.sh --print-source
+```
+
+### Pin a Specific Source
+
+```bash
+./run_system_audio_translate_reazon.sh \
+  --source alsa_output.pci-0000_04_00.1.hdmi-stereo.monitor \
+  --print-source
+```
+
+### Debug Audio Capture
 
 ```bash
 ./run_system_audio_translate_reazon.sh \
@@ -52,10 +149,142 @@ The realtime system-audio translator captures PulseAudio monitor audio, transcri
   --debug-audio
 ```
 
-### Notes
+### Save Output to Text Files
 
-- The run script uses `venv/bin/python` directly and defaults to `--device cuda`.
-- Override the device with `REAZON_DEVICE=cpu` or `REAZON_DEVICE=cuda:0`.
-- Override the translation model with `TRANSLATE_MODEL=...`.
-- The translator suppresses many unstable short fragments and retries mixed-script outputs with a stricter Chinese-only prompt.
-- Current main entrypoint: `system_audio_translate_reazon.py`
+```bash
+./run_system_audio_translate_reazon.sh \
+  --source alsa_output.pci-0000_04_00.1.hdmi-stereo.monitor \
+  --print-source \
+  --output-source-txt source.txt \
+  --output-txt translation.txt
+```
+
+### Run a Short Smoke Test
+
+```bash
+./run_system_audio_translate_reazon.sh \
+  --source alsa_output.pci-0000_04_00.1.hdmi-stereo.monitor \
+  --print-source \
+  --duration-sec 15
+```
+
+## Ollama Integration
+
+The realtime translator uses the local Ollama HTTP API at `http://127.0.0.1:11434/api/generate`.
+
+Quick health check:
+
+```bash
+curl -fsSL http://127.0.0.1:11434/api/generate \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "translategemma:4b-it-q4_K_M",
+    "prompt": "Translate into Simplified Chinese only.\n\n今日はいい天気です。",
+    "stream": false,
+    "options": {"temperature": 0}
+  }'
+```
+
+Useful overrides:
+
+```bash
+TRANSLATE_MODEL=qwen2.5:7b-instruct ./run_system_audio_translate_reazon.sh --print-source
+OLLAMA_HOST=http://127.0.0.1:11434 ./run_system_audio_translate_reazon.sh --print-source
+./run_system_audio_translate_reazon.sh --ollama-timeout-sec 30 --print-source
+```
+
+## Configuration
+
+- Default ASR device: `cuda`
+- CPU override: `REAZON_DEVICE=cpu`
+- Specific GPU override: `REAZON_DEVICE=cuda:0`
+- Translation model override: `TRANSLATE_MODEL=...`
+- Ollama host override: `OLLAMA_HOST=http://host:11434`
+- The translator uses `temperature=0` for stable output.
+- Mixed-script translation output is retried with a stricter Chinese-only prompt.
+
+## Requirements
+
+- Linux with PulseAudio or PipeWire compatibility for `pactl` and `parec`
+- NVIDIA GPU for the intended CUDA path
+- Python 3.10
+- Ollama for local translation
+
+## FAQ / Troubleshooting
+
+### `venv/bin/python` or `venv` does not exist
+
+Create the environment first:
+
+```bash
+python -m venv venv
+```
+
+Then rerun the install steps from `Quick Start`.
+
+### `./upstream/pkg/k2-asr` does not exist
+
+This repository does not require a local upstream checkout.
+Use the Git-based install command from `Quick Start`:
+
+```bash
+venv/bin/pip install git+https://github.com/reazon-research/ReazonSpeech.git#subdirectory=pkg/k2-asr
+```
+
+### The realtime script shows no source output
+
+Check these in order:
+
+- Confirm the monitor source with `./run_system_audio_translate_reazon.sh --list-sources`.
+- Make sure playback starts after the script prints `ready=true`.
+- Try pinning the source explicitly with `--source ...monitor`.
+- Use `--debug-audio` to inspect capture RMS and raw ASR behavior.
+
+### Ollama translation is not working
+
+Check these in order:
+
+- Start the server with `ollama serve`.
+- Confirm the model is present with `ollama list`.
+- Pull the default model with `ollama pull translategemma:4b-it-q4_K_M`.
+- Run the HTTP health check in `Ollama Integration`.
+- If Ollama is remote, set `OLLAMA_HOST=http://host:11434`.
+
+### CUDA startup fails
+
+Check these in order:
+
+- Confirm `nvidia-smi` works on the host.
+- Reinstall the CUDA runtime Python packages listed in `Quick Start`.
+- Rerun the offline benchmark first to isolate ASR issues from realtime capture issues.
+- If needed, force CPU mode with `REAZON_DEVICE=cpu` to verify the rest of the pipeline.
+
+### Translation quality looks unstable on short fragments
+
+This is expected for very short or noisy live segments. Try:
+
+- Increasing source stability by using cleaner playback.
+- Running with `--print-source` to compare ASR against translation.
+- Extending the runtime window through the existing script options if you are tuning for a specific environment.
+
+## Roadmap
+
+- Add optional subtitle-friendly output formats such as `.srt` or `.vtt`.
+- Add richer README assets such as screenshots, terminal captures, or architecture diagrams.
+- Add support for more translation model presets and recommended quality/speed tradeoffs.
+- Add a reproducible demo script for end-to-end local showcases.
+- Add containerized setup for faster onboarding on clean Linux machines.
+
+## Repository Layout
+
+- `benchmark_reazonspeech_k2_cuda.py`: offline benchmark runner
+- `run_benchmark_cuda.sh`: benchmark wrapper with CUDA library paths
+- `system_audio_translate_reazon.py`: realtime ASR and translation entrypoint
+- `run_system_audio_translate_reazon.sh`: realtime wrapper script
+- `demo.mp3`: sample Japanese audio for validation
+
+## Main Entrypoint
+
+```text
+system_audio_translate_reazon.py
+```
